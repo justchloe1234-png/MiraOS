@@ -1,6 +1,6 @@
 #include "vfs.h"
 #include "kernel/heap.h"
-#include "lib/mem.h"
+#include "lib/common/mem.h"
 
 static vfs_node_t *root_node;
 
@@ -37,10 +37,25 @@ static ssize_t vfs_default_read(vfs_node_t *node, void *buf, size_t count, size_
 }
 
 static ssize_t vfs_default_write(vfs_node_t *node, const void *buf, size_t count, size_t offset) {
-    if (!node->data)
-        return -1;
-    if (offset + count > node->size)
-        return -1;
+    if (count == 0)
+        return 0;
+    size_t new_size = offset + count;
+    if (new_size > node->size) {
+        void *new_data = kmalloc(new_size);
+        if (!new_data)
+            return -1;
+        uint8_t *nd = (uint8_t *)new_data;
+        for (size_t i = 0; i < new_size; i++)
+            nd[i] = 0;
+        if (node->data && node->size > 0) {
+            uint8_t *src = (uint8_t *)node->data;
+            for (size_t i = 0; i < node->size; i++)
+                nd[i] = src[i];
+            kfree(node->data);
+        }
+        node->data = new_data;
+        node->size = new_size;
+    }
     uint8_t *dst = (uint8_t *)node->data + offset;
     const uint8_t *src = (const uint8_t *)buf;
     for (size_t i = 0; i < count; i++)
@@ -111,7 +126,7 @@ int vfs_open(const char *path, int flags) {
     vfs_node_t *node = vfs_lookup(path);
     if (!node) {
         if (flags & VFS_O_CREAT) {
-            vfs_create_file(path, "", 0);
+            vfs_create_file(path, 0, 0);
             node = vfs_lookup(path);
         }
         if (!node)
@@ -237,13 +252,19 @@ vfs_node_t *vfs_create_file(const char *path, const void *data, size_t size) {
             if (*p == 0) {
                 child->type = VFS_TYPE_FILE;
                 child->size = size;
-                child->data = kmalloc(size);
-                if (!child->data)
-                    return 0;
-                const uint8_t *src = (const uint8_t *)data;
-                uint8_t *dst = (uint8_t *)child->data;
-                for (size_t i = 0; i < size; i++)
-                    dst[i] = src[i];
+                if (size > 0) {
+                    child->data = kmalloc(size);
+                    if (!child->data) {
+                        kfree(child);
+                        return 0;
+                    }
+                    const uint8_t *src = (const uint8_t *)data;
+                    uint8_t *dst = (uint8_t *)child->data;
+                    for (size_t i = 0; i < size; i++)
+                        dst[i] = src[i];
+                } else {
+                    child->data = 0;
+                }
             } else {
                 child->type = VFS_TYPE_DIR;
             }

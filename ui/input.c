@@ -1,5 +1,5 @@
 #include "input.h"
-#include "drivers/keyboard.h"
+#include "drivers/ps2/keyboard.h"
 
 static char input_buf[INPUT_MAX];
 static size_t input_len;

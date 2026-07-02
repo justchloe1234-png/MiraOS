@@ -1,7 +1,3 @@
-; MiraOS Stage 2 Bootloader - REMOVED
-; Stage1 now loads kernel directly with full paging setup
-; This file is deprecated and no longer used
-
 BITS 32
 ORG 0x1000
 

@@ -55,9 +55,8 @@ bool ata_read_sectors(uint32_t lba, uint8_t *buffer, uint32_t count) {
         ata_wait_drq();
         
         uint16_t *dst = (uint16_t *)(buffer + i * 512);
-        for (int j = 0; j < 256; j++) {
-            dst[j] = inb(ATA_PRIMARY_IO + ATA_REG_DATA) | (inb(ATA_PRIMARY_IO + ATA_REG_DATA) << 8);
-        }
+        for (int j = 0; j < 256; j++)
+            dst[j] = inw(ATA_PRIMARY_IO + ATA_REG_DATA);
     }
     
     /* Check for errors */
@@ -89,10 +88,8 @@ bool ata_write_sectors(uint32_t lba, const uint8_t *buffer, uint32_t count) {
         ata_wait_drq();
         
         const uint16_t *src = (const uint16_t *)(buffer + i * 512);
-        for (int j = 0; j < 256; j++) {
-            outb(ATA_PRIMARY_IO + ATA_REG_DATA, src[j] & 0xFF);
-            outb(ATA_PRIMARY_IO + ATA_REG_DATA, (src[j] >> 8) & 0xFF);
-        }
+        for (int j = 0; j < 256; j++)
+            outw(ATA_PRIMARY_IO + ATA_REG_DATA, src[j]);
     }
     
     /* Check for errors */

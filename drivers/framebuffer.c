@@ -3,7 +3,7 @@
 #include "kernel.h"
 #include "kernel/panic.h"
 #include "kernel/heap.h"
-#include "lib/mem.h"
+#include "lib/common/mem.h"
 
 static framebuffer_t fb;
 static uint32_t *back_buffer = 0;
@@ -28,9 +28,6 @@ static driver_t fb_driver = {
 DRIVER_REGISTER(fb_driver);
 
 bool fb_init(uint64_t mbi) {
-    if (*(uint32_t *)mbi != MULTIBOOT2_MAGIC)
-        return false;
-
     struct multiboot_tag *tag = (struct multiboot_tag *)(mbi + 8);
     while (tag->type != 0) {
         if (tag->type == 8) {

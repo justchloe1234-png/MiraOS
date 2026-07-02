@@ -203,8 +203,10 @@ void text_draw_wrapped(uint32_t x, uint32_t y, uint32_t max_width, const char *s
 }
 
 size_t text_width(const char *str) {
-    if (!str || !str[0]) return 0;
-    return text_width_char(str[0]) + text_width(str + 1);
+    if (!str) return 0;
+    size_t n = 0;
+    while (str[n] && str[n] != '\n') n++;
+    return n * current_font_width;
 }
 
 size_t text_width_char(char c) {

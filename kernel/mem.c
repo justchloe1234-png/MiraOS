@@ -43,9 +43,6 @@ void pmm_init(uint64_t mbi) {
     mem_start = 0x100000;
     mem_end = 0;
 
-    if (*(uint32_t *)mbi != MULTIBOOT2_MAGIC)
-        panic("bad multiboot");
-
     struct multiboot_tag *tag = (struct multiboot_tag *)(mbi + 8);
     while (tag->type != 0) {
         if (tag->type == 6) {

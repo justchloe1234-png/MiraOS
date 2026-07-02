@@ -75,12 +75,6 @@ static void *slab_alloc(slab_cache_t *cache) {
     return obj;
 }
 
-static void slab_free(slab_cache_t *cache, void *ptr) {
-    *(void **)ptr = cache->free_list;
-    cache->free_list = ptr;
-    cache->allocated--;
-}
-
 static slab_cache_t *slab_find_cache(size_t size) {
     slab_cache_t *cache = slab_list;
     while (cache) {
@@ -192,20 +186,6 @@ void *kmalloc(size_t size) {
 void kfree(void *ptr) {
     if (!ptr)
         return;
-    
-    /* Check if this is a slab allocation */
-    uint64_t addr = (uint64_t)ptr;
-    if (addr >= heap_virt_base && addr < heap_virt_base + heap_mapped) {
-        for (int i = 0; i < SLAB_MAX_ORDER; i++) {
-            slab_cache_t *cache = &slab_caches[i];
-            if (addr >= heap_virt_base && 
-                (addr - heap_virt_base) % cache->slab_size < cache->objects_per_slab * cache->object_size) {
-                slab_free(cache, ptr);
-                return;
-            }
-        }
-    }
-    
     struct block_header *block = (struct block_header *)((uint8_t *)ptr - HEADER_SIZE);
     block->free = 1;
     merge_adjacent(block);

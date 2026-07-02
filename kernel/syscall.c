@@ -3,8 +3,9 @@
 #include "arch/x86_64/gdt.h"
 #include "fs/vfs.h"
 #include "drivers/timer.h"
-#include "ui/gfx.h"
-#include "ui/text.h"
+#include "ui/layout/gfx.h"
+#include "ui/layout/text.h"
+#include "kernel/process.h"
 
 extern void syscall_entry(void);
 
@@ -37,8 +38,17 @@ int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, ui
     (void)a5;
 
     switch (num) {
-    case SYSCALL_EXIT:
+    case SYSCALL_EXIT: {
+        process_t *cur = process_get_current();
+        if (cur) {
+            cur->exit_status = (int)a1;
+            cur->state = PROCESS_STATE_ZOMBIE;
+            scheduler_remove(cur);
+            process_destroy(cur);
+        }
+        scheduler_tick();
         return 0;
+    }
     case SYSCALL_READ:
         return vfs_read((int)a1, (void *)a2, (size_t)a3);
     case SYSCALL_WRITE:

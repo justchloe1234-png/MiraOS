@@ -1,9 +1,12 @@
 #include "ui.h"
-#include "shell.h"
 #include "gfx.h"
 #include "text.h"
 #include "widget.h"
+#include "window.h"
+#include "shell.h"
+#include "input.h"
 #include "drivers/framebuffer.h"
+#include "drivers/ps2/mouse.h"
 #include "kernel/heap.h"
 
 static ui_widget_t *root_widget = 0;
@@ -13,17 +16,24 @@ static bool ui_dirty_flag = false;
 void ui_init(void) {
     gfx_init();
     text_init();
+    window_init();
     shell_init();
-    
-    /* Create root widget */
+
     framebuffer_t *fb = fb_info();
     ui_rect_t root_bounds = {0, 0, fb->width, fb->height};
     root_widget = ui_create_widget(0, &root_bounds);
     root_widget->visible = true;
+    ui_dirty_flag = true;
 }
 
 void ui_tick(void) {
     shell_tick();
+    if (mouse_has_moved()) {
+        mouse_clear_moved();
+        ui_dirty_flag = true;
+    }
+    if (shell_dirty())
+        ui_dirty_flag = true;
 }
 
 static void ui_paint_widget(ui_widget_t *widget) {
@@ -42,27 +52,52 @@ static void ui_paint_widget(ui_widget_t *widget) {
         widget->on_paint(widget);
 }
 
+static void ui_draw_cursor(void) {
+    int32_t mx = mouse_get_x();
+    int32_t my = mouse_get_y();
+    framebuffer_t *fb = fb_info();
+    if (mx < 0) mx = 0;
+    if (my < 0) my = 0;
+    if ((uint32_t)mx >= fb->width)  mx = (int32_t)fb->width  - 1;
+    if ((uint32_t)my >= fb->height) my = (int32_t)fb->height - 1;
+    /* Simple arrow cursor: 12x12 */
+    static const uint16_t cursor_shape[12] = {
+        0xFFFF, 0x7FFF, 0x3FFF, 0x1FFF,
+        0x0FFF, 0x07FF, 0x03FF, 0x01FF,
+        0x00FF, 0x007F, 0x003F, 0x001F
+    };
+    for (int row = 0; row < 12; row++) {
+        for (int col = 0; col < 12; col++) {
+            if (cursor_shape[row] & (0x8000 >> col)) {
+                uint32_t px = (uint32_t)(mx + col);
+                uint32_t py = (uint32_t)(my + row);
+                if (px < fb->width && py < fb->height)
+                    fb_put_pixel(px, py, 0xFFFFFF);
+            }
+        }
+    }
+}
+
 void ui_render(void) {
     if (!fb_ready())
         return;
-    
-    /* Clear screen */
-    gfx_clear(0x0A0A14);
-    
-    /* Paint widget tree */
+
+    shell_render();
     ui_paint_widget(root_widget);
-    
+    ui_draw_cursor();
+    fb_swap_buffers();
     ui_clear_dirty();
+    shell_clear_dirty();
 }
 
 bool ui_dirty(void) {
-    return ui_dirty_flag || shell_dirty();
+    return ui_dirty_flag;
 }
 
 void ui_clear_dirty(void) {
     ui_dirty_flag = false;
-    shell_clear_dirty();
 }
+
 
 ui_widget_t *ui_create_widget(ui_widget_t *parent, const ui_rect_t *bounds) {
     ui_widget_t *widget = kmalloc(sizeof(ui_widget_t));

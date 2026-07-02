@@ -101,6 +101,10 @@ static driver_t mouse_driver = {
 
 DRIVER_REGISTER(mouse_driver);
 
+void mouse_init(void) {
+    mouse_init_driver();
+}
+
 void mouse_poll(void) {
 }
 

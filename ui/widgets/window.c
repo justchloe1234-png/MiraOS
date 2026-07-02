@@ -1,7 +1,6 @@
 #include "window.h"
 #include "gfx.h"
 #include "text.h"
-#include "input.h"
 #include "drivers/framebuffer.h"
 
 static ui_window_t windows[MAX_WINDOWS];
@@ -96,12 +95,12 @@ bool window_handle_click(uint32_t x, uint32_t y) {
             y >= win->bounds.y && y < win->bounds.y + win->bounds.h) {
             
             window_bring_to_front(i);
-            
-            if (y < win->bounds.y + 26) {
-                win->dragging = true;
-                win->drag_offset_x = (int32_t)x - (int32_t)win->bounds.x;
-                win->drag_offset_y = (int32_t)y - (int32_t)win->bounds.y;
-                drag_window_idx = i;
+            /* After bring_to_front the window is now at index 0 */
+            if (y < windows[0].bounds.y + 26) {
+                windows[0].dragging = true;
+                windows[0].drag_offset_x = (int32_t)x - (int32_t)windows[0].bounds.x;
+                windows[0].drag_offset_y = (int32_t)y - (int32_t)windows[0].bounds.y;
+                drag_window_idx = 0;
             }
             
             return true;

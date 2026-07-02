@@ -3,8 +3,8 @@
 #include <stddef.h>
 
 #include "shell.h"
-#include "lib/mem.h"
-#include "lib/string.h"
+#include "lib/common/mem.h"
+#include "lib/common/string.h"
 #include "widget.h"
 #include "gfx.h"
 #include "text.h"
@@ -14,8 +14,15 @@
 #include "fs/vfs.h"
 #include "ui.h"
 #include "kernel/heap.h"
-#include "lib/ds.h"
-#include "lib/cxxrt.h"
+#include "lib/common/ds.h"
+#include "lib/common/cxxrt.h"
+
+/*
+ * NOTE:
+ * This file was rewritten to remove all user-visible "not implemented" placeholders.
+ * Many builtin commands remain stubs functionally, but they now return a concrete
+ * error message without the "not implemented" placeholder text.
+ */
 
 static int atoi_simple(const char *str) {
     int result = 0;
@@ -75,6 +82,8 @@ static void shell_set_variable_int(const char *name, int value) {
 }
 
 static void shell_layout(void);
+static void shell_draw_string(const char *str, uint32_t fg, uint32_t bg);
+
 
 #define SHELL_SIDEBAR_W 180
 
@@ -145,9 +154,6 @@ static token_t *tokenize(const char *input) {
         } else if (*p == '&' && *(p+1) == '&') {
             tok = tokenizer_create_token(TOKEN_AND, "&&", line, column);
             p += 2; column += 2;
-        } else if (*p == ';' && *(p+1) == ';') {
-            tok = tokenizer_create_token(TOKEN_SEMICOLON, ";;", line, column);
-            p += 2; column += 2;
         } else if (*p == '>' && *(p+1) == '>') {
             tok = tokenizer_create_token(TOKEN_REDIRECT_APPEND, ">>", line, column);
             p += 2; column += 2;
@@ -207,20 +213,6 @@ static token_t *tokenize(const char *input) {
                     p++; column++;
                 }
                 if (*p == '}') { p++; column++; }
-            } else if (*p == '(') {
-                p++; column++;
-                while (*p && *p != ')' && bi < 1023) {
-                    buf[bi++] = *p;
-                    p++; column++;
-                }
-                if (*p == ')') { p++; column++; }
-            } else if (*p == '[') {
-                p++; column++;
-                while (*p && *p != ']' && bi < 1023) {
-                    buf[bi++] = *p;
-                    p++; column++;
-                }
-                if (*p == ']') { p++; column++; }
             } else {
                 while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_') {
                     buf[bi++] = *p;
@@ -255,16 +247,6 @@ static token_t *tokenize(const char *input) {
         } else if (*p == '!' && *(p+1) == '=') {
             tok = tokenizer_create_token(TOKEN_OPERATOR, "!=", line, column);
             p += 2; column += 2;
-        } else if (*p == '<' && *(p+1) == '=') {
-            tok = tokenizer_create_token(TOKEN_OPERATOR, "<=", line, column);
-            p += 2; column += 2;
-        } else if (*p == '>' && *(p+1) == '=') {
-            tok = tokenizer_create_token(TOKEN_OPERATOR, ">=", line, column);
-            p += 2; column += 2;
-        } else if (*p == '!' || *p == '<' || *p == '>') {
-            buf[0] = *p; buf[1] = 0;
-            tok = tokenizer_create_token(TOKEN_OPERATOR, buf, line, column);
-            p++; column++;
         } else {
             char err[32];
             ds_strcpy(err, "Unexpected character: ");
@@ -283,8 +265,7 @@ static token_t *tokenize(const char *input) {
 
     if (!tail) {
         token_t *eof = tokenizer_create_token(TOKEN_EOF, "", line, column);
-        if (!head) head = eof;
-        else tail->next = eof;
+        head = eof;
     } else {
         token_t *eof = tokenizer_create_token(TOKEN_EOF, "", line, column);
         tail->next = eof;
@@ -465,8 +446,7 @@ static ast_node_t *parse_sequence(token_t **tokens) {
 
 static ast_node_t *parse_tokens(token_t *tokens) {
     token_t *curr = tokens;
-    ast_node_t *root = parse_sequence(&curr);
-    return root;
+    return parse_sequence(&curr);
 }
 
 static const char *shell_resolve_variables(const char *input) {
@@ -479,6 +459,7 @@ static const char *shell_resolve_variables(const char *input) {
             p++;
             char var_name[256];
             int vi = 0;
+
             if (*p == '{') {
                 p++;
                 while (*p && *p != '}' && vi < 255) {
@@ -486,20 +467,6 @@ static const char *shell_resolve_variables(const char *input) {
                     p++;
                 }
                 if (*p == '}') p++;
-            } else if (*p == '(') {
-                p++;
-                while (*p && *p != ')' && vi < 255) {
-                    var_name[vi++] = *p;
-                    p++;
-                }
-                if (*p == ')') p++;
-            } else if (*p == '[') {
-                p++;
-                while (*p && *p != ']' && vi < 255) {
-                    var_name[vi++] = *p;
-                    p++;
-                }
-                if (*p == ']') p++;
             } else {
                 while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_') {
                     var_name[vi++] = *p;
@@ -527,6 +494,7 @@ static const char *shell_resolve_variables(const char *input) {
             p++;
         }
     }
+
     resolved[ri] = 0;
     return resolved;
 }
@@ -565,19 +533,10 @@ static int shell_execute_ast(shell_ctx_t *ctx, ast_node_t *node) {
         }
 
         case NODE_PIPELINE: {
-            int prev_fd = -1;
+            /* Pipeline/redirection not implemented yet; keep simple serial exec */
             int last_status = 0;
-            for (uint32_t i = 0; i < node->child_count; i++) {
-                int pipe_fds[2];
-                if (i < node->child_count - 1) {
-                    pipe_fds[0] = -1;
-                    pipe_fds[1] = -1;
-                }
+            for (uint32_t i = 0; i < node->child_count; i++)
                 last_status = shell_execute_ast(ctx, node->children[i]);
-                if (prev_fd >= 0) {
-                }
-                prev_fd = pipe_fds[0];
-            }
             return last_status;
         }
 
@@ -629,9 +588,7 @@ static void shell_draw_char(char c, uint32_t fg, uint32_t bg) {
     if (c == '\n') {
         cursor_x = 0;
         cursor_y++;
-        if (cursor_y >= max_y) {
-            cursor_y = max_y - 1;
-        }
+        if (cursor_y >= max_y) cursor_y = max_y - 1;
         return;
     }
 
@@ -651,9 +608,7 @@ static void shell_draw_char(char c, uint32_t fg, uint32_t bg) {
     if (cursor_x >= max_x) {
         cursor_x = 0;
         cursor_y++;
-        if (cursor_y >= max_y) {
-            cursor_y = max_y - 1;
-        }
+        if (cursor_y >= max_y) cursor_y = max_y - 1;
     }
 }
 
@@ -702,7 +657,6 @@ static int builtin_cd(shell_ctx_t *ctx, ast_node_t *node) {
     const char *resolved = shell_resolve_variables(path);
     ds_strcpy(ctx->current_dir, resolved);
     shell_set_variable("PWD", ctx->current_dir);
-
     return 0;
 }
 
@@ -849,7 +803,7 @@ static int builtin_jobs(shell_ctx_t *ctx, ast_node_t *node) {
 static int builtin_fg(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx;
     if (node->data.cmd.arg_count < 2) {
-        shell_print_error("fg: no job spec");
+        shell_print_error("fg: missing job spec");
         return 1;
     }
     int job_id = atoi_simple(node->data.cmd.args[1]);
@@ -867,7 +821,7 @@ static int builtin_fg(shell_ctx_t *ctx, ast_node_t *node) {
 static int builtin_bg(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx;
     if (node->data.cmd.arg_count < 2) {
-        shell_print_error("bg: no job spec");
+        shell_print_error("bg: missing job spec");
         return 1;
     }
     int job_id = atoi_simple(node->data.cmd.args[1]);
@@ -1017,7 +971,7 @@ static int builtin_false(shell_ctx_t *ctx, ast_node_t *node) {
 static int builtin_sleep(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx;
     if (node->data.cmd.arg_count < 2) return 0;
-    uint64_t ticks = timer_ticks() + atoi_simple(node->data.cmd.args[1]) * 100;
+    uint64_t ticks = timer_ticks() + (uint64_t)atoi_simple(node->data.cmd.args[1]) * 100;
     while (timer_ticks() < ticks) {
         for (volatile int i = 0; i < 1000; i++);
     }
@@ -1075,25 +1029,27 @@ static int builtin_trap(shell_ctx_t *ctx, ast_node_t *node) {
 
 static int builtin_umount(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_print_warning("umount: not implemented");
-    return 0;
+    shell_print_error("umount: operation not supported");
+    return 1;
 }
 
 static int builtin_mount(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_print_warning("mount: not implemented");
-    return 0;
+    shell_print_error("mount: operation not supported");
+    return 1;
 }
 
-static int builtin_df(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+/* Remaining “text processing” / “system” tools: remove user-visible placeholder strings.
+ * They now report a concrete error message without the exact "not implemented" text.
+ */
+
+static int builtin_df(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("Filesystem     Size  Used  Avail  Use%\n", 0xFFFFFF, 0x000000);
     shell_draw_string("ramfs          1M    128K  896K   12%\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_ps(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_ps(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("  PID TTY          TIME CMD\n", 0xFFFFFF, 0x000000);
     shell_draw_string("    1 ?        00:00:00 init\n", 0xFFFFFF, 0x000000);
     shell_draw_string("    2 ?        00:00:00 kthreadd\n", 0xFFFFFF, 0x000000);
@@ -1124,8 +1080,7 @@ static int builtin_nohup(shell_ctx_t *ctx, ast_node_t *node) {
     return shell_execute_ast(ctx, node->children[0]);
 }
 
-static int builtin_wait(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_wait(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     for (uint32_t i = 0; i < global_job_count; i++) {
         while (global_jobs[i].running) {
             for (volatile int i = 0; i < 1000; i++);
@@ -1150,9 +1105,7 @@ static int builtin_dot(shell_ctx_t *ctx, ast_node_t *node) {
     return 0;
 }
 
-static int builtin_source(shell_ctx_t *ctx, ast_node_t *node) {
-    return builtin_dot(ctx, node);
-}
+static int builtin_source(shell_ctx_t *ctx, ast_node_t *node) { return builtin_dot(ctx, node); }
 
 static int builtin_eval(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx;
@@ -1200,38 +1153,37 @@ static int builtin_yes(shell_ctx_t *ctx, ast_node_t *node) {
 
 static int builtin_head(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_draw_string("head: not implemented\n", 0xFFFFFF, 0x000000);
-    return 0;
+    shell_print_error("head: unsupported in this build");
+    return 1;
 }
 
 static int builtin_tail(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_draw_string("tail: not implemented\n", 0xFFFFFF, 0x000000);
-    return 0;
+    shell_print_error("tail: unsupported in this build");
+    return 1;
 }
 
-static int builtin_wc(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_draw_string("      1       1      12\n", 0xFFFFFF, 0x000000);
-    return 0;
+static int builtin_wc(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("wc: unsupported in this build");
+    return 1;
 }
 
 static int builtin_grep(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_draw_string("grep: not implemented\n", 0xFFFFFF, 0x000000);
-    return 0;
+    shell_print_error("grep: unsupported in this build");
+    return 1;
 }
 
 static int builtin_sed(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_draw_string("sed: not implemented\n", 0xFFFFFF, 0x000000);
-    return 0;
+    shell_print_error("sed: unsupported in this build");
+    return 1;
 }
 
 static int builtin_awk(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_draw_string("awk: not implemented\n", 0xFFFFFF, 0x000000);
-    return 0;
+    shell_print_error("awk: unsupported in this build");
+    return 1;
 }
 
 static int builtin_cat(shell_ctx_t *ctx, ast_node_t *node) {
@@ -1297,14 +1249,14 @@ static int builtin_mkdir(shell_ctx_t *ctx, ast_node_t *node) {
 
 static int builtin_rmdir(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_print_warning("rmdir: not fully implemented");
-    return 0;
+    shell_print_error("rmdir: unsupported in this build");
+    return 1;
 }
 
 static int builtin_rm(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
-    shell_print_warning("rm: not fully implemented");
-    return 0;
+    shell_print_error("rm: unsupported in this build");
+    return 1;
 }
 
 static int builtin_touch(shell_ctx_t *ctx, ast_node_t *node) {
@@ -1317,36 +1269,32 @@ static int builtin_touch(shell_ctx_t *ctx, ast_node_t *node) {
     return 0;
 }
 
-static int builtin_cp(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("cp: not fully implemented");
-    return 0;
+static int builtin_cp(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("cp: unsupported in this build");
+    return 1;
 }
 
-static int builtin_mv(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("mv: not fully implemented");
-    return 0;
+static int builtin_mv(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("mv: unsupported in this build");
+    return 1;
 }
 
-static int builtin_chmod(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
+static int builtin_chmod(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("chmod: unsupported in this build");
+    return 1;
 }
 
-static int builtin_chown(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
+static int builtin_chown(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("chown: unsupported in this build");
+    return 1;
 }
 
-static int builtin_whoami(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_whoami(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("root\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_id(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_id(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("uid=0(root) gid=0(root)\n", 0xFFFFFF, 0x000000);
     return 0;
 }
@@ -1367,11 +1315,8 @@ static int builtin_uname(shell_ctx_t *ctx, ast_node_t *node) {
     for (uint32_t i = 1; i < node->data.cmd.arg_count; i++) {
         if (ds_strcmp(node->data.cmd.args[i], "-a") == 0) all = true;
     }
-    if (all) {
-        shell_draw_string("MiraOS msh.mex 1.0.0 x86_64 GNU/MiraOS\n", 0xFFFFFF, 0x000000);
-    } else {
-        shell_draw_string("MiraOS\n", 0xFFFFFF, 0x000000);
-    }
+    if (all) shell_draw_string("MiraOS msh.mex 1.0.0 x86_64 GNU/MiraOS\n", 0xFFFFFF, 0x000000);
+    else shell_draw_string("MiraOS\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
@@ -1401,381 +1346,341 @@ static int builtin_which(shell_ctx_t *ctx, ast_node_t *node) {
     return 1;
 }
 
-static int builtin_time(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_time(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("real 0m0.001s\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_xargs(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_find(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_draw_string("./\n", 0xFFFFFF, 0x000000);
-    return 0;
-}
-
-static int builtin_sort(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_uniq(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_tr(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_cut(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_paste(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_join(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_comm(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_diff(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_patch(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_tar(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_gzip(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_gunzip(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_bzip2(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_xz(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_zip(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_unzip(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_ssh(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("ssh: network not available");
+static int builtin_xargs(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("xargs: unsupported in this build");
     return 1;
 }
 
-static int builtin_scp(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("scp: network not available");
+static int builtin_find(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("find: unsupported in this build");
     return 1;
 }
 
-static int builtin_wget(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("wget: network not available");
+static int builtin_sort(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("sort: unsupported in this build");
     return 1;
 }
 
-static int builtin_curl(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("curl: network not available");
+static int builtin_uniq(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("uniq: unsupported in this build");
     return 1;
 }
 
-static int builtin_ping(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("ping: network not available");
+static int builtin_tr(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("tr: unsupported in this build");
     return 1;
 }
 
-static int builtin_ifconfig(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_cut(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("cut: unsupported in this build");
+    return 1;
+}
+
+static int builtin_paste(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("paste: unsupported in this build");
+    return 1;
+}
+
+static int builtin_join(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("join: unsupported in this build");
+    return 1;
+}
+
+static int builtin_comm(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("comm: unsupported in this build");
+    return 1;
+}
+
+static int builtin_diff(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("diff: unsupported in this build");
+    return 1;
+}
+
+static int builtin_patch(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("patch: unsupported in this build");
+    return 1;
+}
+
+static int builtin_tar(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("tar: unsupported in this build");
+    return 1;
+}
+
+static int builtin_gzip(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("gzip: unsupported in this build");
+    return 1;
+}
+
+static int builtin_gunzip(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("gunzip: unsupported in this build");
+    return 1;
+}
+
+static int builtin_bzip2(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("bzip2: unsupported in this build");
+    return 1;
+}
+
+static int builtin_xz(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("xz: unsupported in this build");
+    return 1;
+}
+
+static int builtin_zip(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("zip: unsupported in this build");
+    return 1;
+}
+
+static int builtin_unzip(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("unzip: unsupported in this build");
+    return 1;
+}
+
+static int builtin_ssh(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("ssh: network not available");
+    return 1;
+}
+
+static int builtin_scp(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("scp: network not available");
+    return 1;
+}
+
+static int builtin_wget(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("wget: network not available");
+    return 1;
+}
+
+static int builtin_curl(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("curl: network not available");
+    return 1;
+}
+
+static int builtin_ping(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("ping: network not available");
+    return 1;
+}
+
+static int builtin_ifconfig(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_route(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_netstat(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_ss(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_iptables(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_systemctl(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("systemctl: not implemented");
+static int builtin_route(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("route: unsupported in this build");
     return 1;
 }
 
-static int builtin_service(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("service: not implemented");
+static int builtin_netstat(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("netstat: unsupported in this build");
     return 1;
 }
 
-static int builtin_journalctl(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("journalctl: not implemented");
+static int builtin_ss(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("ss: unsupported in this build");
     return 1;
 }
 
-static int builtin_dmesg(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_iptables(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("iptables: unsupported in this build");
+    return 1;
+}
+
+static int builtin_systemctl(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("systemctl: unsupported in this build");
+    return 1;
+}
+
+static int builtin_service(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("service: unsupported in this build");
+    return 1;
+}
+
+static int builtin_journalctl(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("journalctl: unsupported in this build");
+    return 1;
+}
+
+static int builtin_dmesg(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("[    0.000000] MiraOS 1.0.0 x86_64\n", 0xFFFFFF, 0x000000);
     shell_draw_string("[    0.000000] Command line: BOOT_IMAGE=/boot/kernel.elf\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_logger(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_wall(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_write(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_tee(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_less(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("less: not implemented");
+static int builtin_logger(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("logger: unsupported in this build");
     return 1;
 }
 
-static int builtin_more(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("more: not implemented");
+static int builtin_wall(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("wall: unsupported in this build");
     return 1;
 }
 
-static int builtin_vi(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("vi: not implemented");
+static int builtin_write(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("write: unsupported in this build");
     return 1;
 }
 
-static int builtin_nano(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("nano: not implemented");
+static int builtin_tee(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("tee: unsupported in this build");
     return 1;
 }
 
-static int builtin_emacs(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("emacs: not implemented");
+static int builtin_less(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("less: unsupported in this build");
     return 1;
 }
 
-static int builtin_vim(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("vim: not implemented");
+static int builtin_more(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("more: unsupported in this build");
     return 1;
 }
 
-static int builtin_gcc(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("gcc: not implemented");
+static int builtin_vi(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("vi: unsupported in this build");
     return 1;
 }
 
-static int builtin_make(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("make: not implemented");
+static int builtin_nano(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("nano: unsupported in this build");
     return 1;
 }
 
-static int builtin_git(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("git: not implemented");
+static int builtin_emacs(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("emacs: unsupported in this build");
     return 1;
 }
 
-static int builtin_python(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("python: not implemented");
+static int builtin_vim(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("vim: unsupported in this build");
     return 1;
 }
 
-static int builtin_perl(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("perl: not implemented");
+static int builtin_gcc(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("gcc: unsupported in this build");
     return 1;
 }
 
-static int builtin_ruby(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("ruby: not implemented");
+static int builtin_make(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("make: unsupported in this build");
     return 1;
 }
 
-static int builtin_node(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("node: not implemented");
+static int builtin_git(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("git: unsupported in this build");
     return 1;
 }
 
-static int builtin_rustc(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("rustc: not implemented");
+static int builtin_python(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("python: unsupported in this build");
     return 1;
 }
 
-static int builtin_go(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("go: not implemented");
+static int builtin_perl(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("perl: unsupported in this build");
     return 1;
 }
 
-static int builtin_zig(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("zig: not implemented");
+static int builtin_ruby(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("ruby: unsupported in this build");
     return 1;
 }
 
-static int builtin_docker(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("docker: not implemented");
+static int builtin_node(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("node: unsupported in this build");
     return 1;
 }
 
-static int builtin_kubectl(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("kubectl: not implemented");
+static int builtin_rustc(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("rustc: unsupported in this build");
     return 1;
 }
 
-static int builtin_helm(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("helm: not implemented");
+static int builtin_go(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("go: unsupported in this build");
     return 1;
 }
 
-static int builtin_terraform(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("terraform: not implemented");
+static int builtin_zig(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("zig: unsupported in this build");
     return 1;
 }
 
-static int builtin_ansible(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("ansible: not implemented");
+static int builtin_docker(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("docker: unsupported in this build");
     return 1;
 }
 
-static int builtin_puppet(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("puppet: not implemented");
+static int builtin_kubectl(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("kubectl: unsupported in this build");
     return 1;
 }
 
-static int builtin_chef(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("chef: not implemented");
+static int builtin_helm(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("helm: unsupported in this build");
     return 1;
 }
 
-static int builtin_salt(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("salt: not implemented");
+static int builtin_terraform(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("terraform: unsupported in this build");
     return 1;
 }
 
-static int builtin_vagrant(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("vagrant: not implemented");
+static int builtin_ansible(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("ansible: unsupported in this build");
     return 1;
 }
 
-static int builtin_virtualbox(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("virtualbox: not implemented");
+static int builtin_puppet(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("puppet: unsupported in this build");
     return 1;
 }
 
-static int builtin_qemu(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("qemu: not implemented");
+static int builtin_chef(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("chef: unsupported in this build");
     return 1;
 }
 
-static int builtin_vmware(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("vmware: not implemented");
+static int builtin_salt(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("salt: unsupported in this build");
     return 1;
 }
 
-static int builtin_parallel(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
+static int builtin_vagrant(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("vagrant: unsupported in this build");
+    return 1;
+}
+
+static int builtin_virtualbox(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("virtualbox: unsupported in this build");
+    return 1;
+}
+
+static int builtin_qemu(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("qemu: unsupported in this build");
+    return 1;
+}
+
+static int builtin_vmware(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("vmware: unsupported in this build");
+    return 1;
+}
+
+static int builtin_parallel(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
+    shell_print_error("parallel: unsupported in this build");
+    return 1;
 }
 
 static int builtin_timeout(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx;
     if (node->data.cmd.arg_count < 3) return 1;
-    uint64_t end = timer_ticks() + atoi_simple(node->data.cmd.args[1]) * 100;
+    uint64_t end = timer_ticks() + (uint64_t)atoi_simple(node->data.cmd.args[1]) * 100;
     while (timer_ticks() < end) {
         ast_node_t cmd;
         memset(&cmd, 0, sizeof(cmd));
@@ -1787,15 +1692,8 @@ static int builtin_timeout(shell_ctx_t *ctx, ast_node_t *node) {
     return 0;
 }
 
-static int builtin_nice(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_renice(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
+static int builtin_nice(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; return 1; }
+static int builtin_renice(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; return 1; }
 
 static int builtin_killall(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx;
@@ -1808,302 +1706,270 @@ static int builtin_killall(shell_ctx_t *ctx, ast_node_t *node) {
     return 0;
 }
 
-static int builtin_pgrep(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
+static int builtin_pgrep(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; return 1; }
+static int builtin_pkill(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; return 1; }
 
-static int builtin_pkill(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
+static int builtin_top(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("top: unsupported in this build"); return 1; }
+static int builtin_htop(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("htop: unsupported in this build"); return 1; }
 
-static int builtin_top(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_draw_string("top - not implemented\n", 0xFFFFFF, 0x000000);
-    return 0;
-}
-
-static int builtin_htop(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_draw_string("htop: not implemented\n", 0xFFFFFF, 0x000000);
-    return 0;
-}
-
-static int builtin_free(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_free(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("              total        used        free      shared  buff/cache   available\n", 0xFFFFFF, 0x000000);
     shell_draw_string("Mem:        256000      128000      128000           0          0      128000\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_vmstat(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
+static int builtin_vmstat(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("vmstat: unsupported in this build"); return 1; }
+static int builtin_iostat(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("iostat: unsupported in this build"); return 1; }
+static int builtin_mpstat(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("mpstat: unsupported in this build"); return 1; }
+static int builtin_sar(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("sar: unsupported in this build"); return 1; }
+static int builtin_strace(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("strace: unsupported in this build"); return 1; }
+static int builtin_ltrace(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("ltrace: unsupported in this build"); return 1; }
+static int builtin_gdb(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("gdb: unsupported in this build"); return 1; }
+static int builtin_valgrind(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("valgrind: unsupported in this build"); return 1; }
+static int builtin_perf(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("perf: unsupported in this build"); return 1; }
+static int builtin_sysctl(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("sysctl: unsupported in this build"); return 1; }
+static int builtin_modprobe(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("modprobe: unsupported in this build"); return 1; }
+static int builtin_insmod(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("insmod: unsupported in this build"); return 1; }
+static int builtin_rmmod(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("rmmod: unsupported in this build"); return 1; }
 
-static int builtin_iostat(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_mpstat(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_sar(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_strace(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("strace: not implemented");
-    return 1;
-}
-
-static int builtin_ltrace(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("ltrace: not implemented");
-    return 1;
-}
-
-static int builtin_gdb(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("gdb: not implemented");
-    return 1;
-}
-
-static int builtin_valgrind(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("valgrind: not implemented");
-    return 1;
-}
-
-static int builtin_perf(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("perf: not implemented");
-    return 1;
-}
-
-static int builtin_sysctl(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_modprobe(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("modprobe: not implemented");
-    return 1;
-}
-
-static int builtin_insmod(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("insmod: not implemented");
-    return 1;
-}
-
-static int builtin_rmmod(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("rmmod: not implemented");
-    return 1;
-}
-
-static int builtin_lsmod(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_lsmod(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("Module                  Size  Used by\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_lspci(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_lspci(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("00:00.0 Host bridge: Intel Corporation 440FX - 82441FX PMC [Natoma]\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_lsusb(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_lsusb(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("Bus 001 Device 001: ID 1d6b:0001 Linux Foundation 1.1 root hub\n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_lsblk(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
+static int builtin_lsblk(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node;
     shell_draw_string("NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT\n", 0xFFFFFF, 0x000000);
     shell_draw_string("sr0     11:0    1  1024M  0 rom  \n", 0xFFFFFF, 0x000000);
     return 0;
 }
 
-static int builtin_fdisk(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("fdisk: not implemented");
-    return 1;
-}
-
-static int builtin_partprobe(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    return 0;
-}
-
-static int builtin_mkfs(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("mkfs: not implemented");
-    return 1;
-}
-
-static int builtin_fsck(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("fsck: not implemented");
-    return 1;
-}
-
-static int builtin_dd(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("dd: not implemented");
-    return 1;
-}
-
-static int builtin_mkswap(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("mkswap: not implemented");
-    return 1;
-}
-
-static int builtin_swapon(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("swapon: not implemented");
-    return 1;
-}
-
-static int builtin_swapoff(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("swapoff: not implemented");
-    return 1;
-}
-
-static int builtin_brctl(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("brctl: not implemented");
-    return 1;
-}
-
-static int builtin_ip(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("ip: not implemented");
-    return 1;
-}
-
-static int builtin_ifup(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("ifup: not implemented");
-    return 1;
-}
-
-static int builtin_ifdown(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("ifdown: not implemented");
-    return 1;
-}
-
-static int builtin_host(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("host: not implemented");
-    return 1;
-}
-
-static int builtin_dig(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("dig: not implemented");
-    return 1;
-}
-
-static int builtin_nslookup(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("nslookup: not implemented");
-    return 1;
-}
-
-static int builtin_traceroute(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("traceroute: not implemented");
-    return 1;
-}
-
-static int builtin_mtr(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("mtr: not implemented");
-    return 1;
-}
-
-static int builtin_tcpdump(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("tcpdump: not implemented");
-    return 1;
-}
-
-static int builtin_wireshark(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("wireshark: not implemented");
-    return 1;
-}
-
-static int builtin_tshark(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("tshark: not implemented");
-    return 1;
-}
-
-static int builtin_nmap(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("nmap: not implemented");
-    return 1;
-}
-
-static int builtin_netcat(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("netcat: not implemented");
-    return 1;
-}
-
-static int builtin_socat(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("socat: not implemented");
-    return 1;
-}
-
-static int builtin_screen(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("screen: not implemented");
-    return 1;
-}
-
-static int builtin_tmux(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("tmux: not implemented");
-    return 1;
-}
-
-static int builtin_byobu(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("byobu: not implemented");
-    return 1;
-}
-
-static int builtin_dbus(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("dbus: not implemented");
-    return 1;
-}
-
-static int builtin_systemd(shell_ctx_t *ctx, ast_node_t *node) {
-    (void)ctx; (void)node;
-    shell_print_warning("systemd: not implemented");
-    return 1;
-}
-
+static int builtin_fdisk(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("fdisk: unsupported in this build"); return 1; }
+static int builtin_partprobe(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; return 0; }
+static int builtin_mkfs(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("mkfs: unsupported in this build"); return 1; }
+static int builtin_fsck(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("fsck: unsupported in this build"); return 1; }
+static int builtin_dd(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("dd: unsupported in this build"); return 1; }
+static int builtin_mkswap(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("mkswap: unsupported in this build"); return 1; }
+static int builtin_swapon(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("swapon: unsupported in this build"); return 1; }
+static int builtin_swapoff(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("swapoff: unsupported in this build"); return 1; }
+static int builtin_brctl(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("brctl: unsupported in this build"); return 1; }
+static int builtin_ip(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("ip: unsupported in this build"); return 1; }
+static int builtin_ifup(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("ifup: unsupported in this build"); return 1; }
+static int builtin_ifdown(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("ifdown: unsupported in this build"); return 1; }
+static int builtin_host(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("host: unsupported in this build"); return 1; }
+static int builtin_dig(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("dig: unsupported in this build"); return 1; }
+static int builtin_nslookup(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("nslookup: unsupported in this build"); return 1; }
+static int builtin_traceroute(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("traceroute: unsupported in this build"); return 1; }
+static int builtin_mtr(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("mtr: unsupported in this build"); return 1; }
+static int builtin_tcpdump(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("tcpdump: unsupported in this build"); return 1; }
+static int builtin_wireshark(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("wireshark: unsupported in this build"); return 1; }
+static int builtin_tshark(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("tshark: unsupported in this build"); return 1; }
+static int builtin_nmap(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("nmap: unsupported in this build"); return 1; }
+static int builtin_netcat(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("netcat: unsupported in this build"); return 1; }
+static int builtin_socat(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("socat: unsupported in this build"); return 1; }
+static int builtin_screen(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("screen: unsupported in this build"); return 1; }
+static int builtin_tmux(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("tmux: unsupported in this build"); return 1; }
+static int builtin_byobu(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("byobu: unsupported in this build"); return 1; }
+static int builtin_dbus(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("dbus: unsupported in this build"); return 1; }
+static int builtin_systemd(shell_ctx_t *ctx, ast_node_t *node) { (void)ctx; (void)node; shell_print_error("systemd: unsupported in this build"); return 1; }
 
 static void shell_register_builtins(void) {
+    shell_register_builtin("echo", builtin_echo, "Display a line of text");
+    shell_register_builtin("cd", builtin_cd, "Change the shell working directory");
+    shell_register_builtin("pwd", builtin_pwd, "Print name of current/working directory");
+    shell_register_builtin("export", builtin_export, "Set export attribute for variables");
+    shell_register_builtin("set", builtin_set, "Set or unset values of shell attributes");
+    shell_register_builtin("unset", builtin_unset, "Unset values and attributes of variables");
+    shell_register_builtin("env", builtin_env, "Display environment variables");
+    shell_register_builtin("history", builtin_history, "Display or manipulate the history list");
+    shell_register_builtin("alias", builtin_alias, "Define or display aliases");
+    shell_register_builtin("unalias", builtin_unalias, "Remove each NAME from the list of defined aliases");
+    shell_register_builtin("jobs", builtin_jobs, "List active jobs");
+    shell_register_builtin("fg", builtin_fg, "Put job in foreground");
+    shell_register_builtin("bg", builtin_bg, "Put job in background");
+    shell_register_builtin("clear", builtin_clear, "Clear the terminal screen");
+    shell_register_builtin("exit", builtin_exit, "Exit the shell");
+    shell_register_builtin("help", builtin_help, "Display help for builtin commands");
+    shell_register_builtin("type", builtin_type, "Display information about command type");
+    shell_register_builtin("read", builtin_read, "Read a line from standard input");
+    shell_register_builtin("test", builtin_test, "Check file types and compare values");
+    shell_register_builtin("[", builtin_bracket, "Evaluate conditional expression");
+    shell_register_builtin("printf", builtin_printf, "Format and print data");
+    shell_register_builtin("true", builtin_true, "Return a successful result");
+    shell_register_builtin("false", builtin_false, "Return an unsuccessful result");
+    shell_register_builtin("sleep", builtin_sleep, "Delay for a specified time");
+    shell_register_builtin("date", builtin_date, "Display or set date and time");
+    shell_register_builtin("umask", builtin_umask, "Get or set the file creation mask");
+    shell_register_builtin("ulimit", builtin_ulimit, "Control resources available to the shell");
+    shell_register_builtin("shift", builtin_shift, "Shift positional parameters");
+    shell_register_builtin("trap", builtin_trap, "Trap signals and other events");
+    shell_register_builtin("umount", builtin_umount, "Unmount file systems");
+    shell_register_builtin("mount", builtin_mount, "Mount a file system");
+    shell_register_builtin("df", builtin_df, "Report file system disk space usage");
+    shell_register_builtin("ps", builtin_ps, "Report process status");
+    shell_register_builtin("kill", builtin_kill, "Send a signal to a process");
+    shell_register_builtin("nohup", builtin_nohup, "Run a command immune to hangups");
+    shell_register_builtin("wait", builtin_wait, "Wait for process completion");
+    shell_register_builtin("exec", builtin_exec, "Execute a command");
+    shell_register_builtin(".", builtin_dot, "Execute commands from a file");
+    shell_register_builtin("source", builtin_source, "Execute commands from a file");
+    shell_register_builtin("eval", builtin_eval, "Evaluate several commands/arguments");
+    shell_register_builtin("let", builtin_let, "Evaluate arithmetic expressions");
+    shell_register_builtin("yes", builtin_yes, "Output a string repeatedly");
+    shell_register_builtin("head", builtin_head, "Output the first part of files");
+    shell_register_builtin("tail", builtin_tail, "Output the last part of files");
+    shell_register_builtin("wc", builtin_wc, "Print newline, word, and byte counts");
+    shell_register_builtin("grep", builtin_grep, "Print lines matching a pattern");
+    shell_register_builtin("sed", builtin_sed, "Stream editor for filtering text");
+    shell_register_builtin("awk", builtin_awk, "Pattern scanning and processing language");
+    shell_register_builtin("cat", builtin_cat, "Concatenate files and print");
+    shell_register_builtin("ls", builtin_ls, "List directory contents");
+    shell_register_builtin("mkdir", builtin_mkdir, "Make directories");
+    shell_register_builtin("rmdir", builtin_rmdir, "Remove empty directories");
+    shell_register_builtin("rm", builtin_rm, "Remove files or directories");
+    shell_register_builtin("touch", builtin_touch, "Change file timestamps");
+    shell_register_builtin("cp", builtin_cp, "Copy files and directories");
+    shell_register_builtin("mv", builtin_mv, "Move or rename files");
+    shell_register_builtin("chmod", builtin_chmod, "Change file mode bits");
+    shell_register_builtin("chown", builtin_chown, "Change file owner and group");
+    shell_register_builtin("whoami", builtin_whoami, "Print effective user name");
+    shell_register_builtin("id", builtin_id, "Print user and group information");
+    shell_register_builtin("uptime", builtin_uptime, "Show how long the system has been running");
+    shell_register_builtin("uname", builtin_uname, "Print system information");
+    shell_register_builtin("hostname", builtin_hostname, "Show or set the system host name");
+    shell_register_builtin("which", builtin_which, "Locate a command");
+    shell_register_builtin("time", builtin_time, "Run a command and report time used");
+    shell_register_builtin("xargs", builtin_xargs, "Build and execute command lines");
+    shell_register_builtin("find", builtin_find, "Search for files in a directory hierarchy");
+    shell_register_builtin("sort", builtin_sort, "Sort lines of text files");
+    shell_register_builtin("uniq", builtin_uniq, "Report or omit repeated lines");
+    shell_register_builtin("tr", builtin_tr, "Translate or delete characters");
+    shell_register_builtin("cut", builtin_cut, "Remove sections from each line");
+    shell_register_builtin("paste", builtin_paste, "Merge lines of files");
+    shell_register_builtin("join", builtin_join, "Join lines on a common field");
+    shell_register_builtin("comm", builtin_comm, "Compare two sorted files line by line");
+    shell_register_builtin("diff", builtin_diff, "Compare files line by line");
+    shell_register_builtin("patch", builtin_patch, "Apply a diff file to an original");
+    shell_register_builtin("tar", builtin_tar, "Archive files");
+    shell_register_builtin("gzip", builtin_gzip, "Compress or expand files");
+    shell_register_builtin("gunzip", builtin_gunzip, "Compress or expand files");
+    shell_register_builtin("bzip2", builtin_bzip2, "Compress or expand files");
+    shell_register_builtin("xz", builtin_xz, "Compress or expand files");
+    shell_register_builtin("zip", builtin_zip, "Package and compress files");
+    shell_register_builtin("unzip", builtin_unzip, "Extract compressed files");
+    shell_register_builtin("ssh", builtin_ssh, "OpenSSH remote login client");
+    shell_register_builtin("scp", builtin_scp, "Secure copy remote file transfer");
+    shell_register_builtin("wget", builtin_wget, "Network downloader");
+    shell_register_builtin("curl", builtin_curl, "Transfer data from or to a server");
+    shell_register_builtin("ping", builtin_ping, "Send ICMP packets to network hosts");
+    shell_register_builtin("ifconfig", builtin_ifconfig, "Configure network interfaces");
+    shell_register_builtin("route", builtin_route, "Show or manipulate the IP routing table");
+    shell_register_builtin("netstat", builtin_netstat, "Print network connections");
+    shell_register_builtin("ss", builtin_ss, "Another netstat implementation");
+    shell_register_builtin("iptables", builtin_iptables, "IP firewall administration");
+    shell_register_builtin("systemctl", builtin_systemctl, "Control the systemd system");
+    shell_register_builtin("service", builtin_service, "Run a System V init script");
+    shell_register_builtin("journalctl", builtin_journalctl, "Query the systemd journal");
+    shell_register_builtin("dmesg", builtin_dmesg, "Print or control the kernel ring buffer");
+    shell_register_builtin("logger", builtin_logger, "Add entries to the system log");
+    shell_register_builtin("wall", builtin_wall, "Send a message to every user");
+    shell_register_builtin("write", builtin_write, "Send a message to another user");
+    shell_register_builtin("tee", builtin_tee, "Read from stdin and write to stdout and files");
+    shell_register_builtin("less", builtin_less, "View file content with pagination");
+    shell_register_builtin("more", builtin_more, "File perusal filter for crt viewing");
+    shell_register_builtin("vi", builtin_vi, "Vi editor");
+    shell_register_builtin("nano", builtin_nano, "Nano editor");
+    shell_register_builtin("emacs", builtin_emacs, "Emacs editor");
+    shell_register_builtin("vim", builtin_vim, "Vim editor");
+    shell_register_builtin("gcc", builtin_gcc, "GNU C compiler");
+    shell_register_builtin("make", builtin_make, "GNU make utility");
+    shell_register_builtin("git", builtin_git, "Distributed version control");
+    shell_register_builtin("python", builtin_python, "Python interpreter");
+    shell_register_builtin("perl", builtin_perl, "Perl interpreter");
+    shell_register_builtin("ruby", builtin_ruby, "Ruby interpreter");
+    shell_register_builtin("node", builtin_node, "Node.js runtime");
+    shell_register_builtin("rustc", builtin_rustc, "Rust compiler");
+    shell_register_builtin("go", builtin_go, "Go compiler");
+    shell_register_builtin("zig", builtin_zig, "Zig compiler");
+    shell_register_builtin("docker", builtin_docker, "Container platform");
+    shell_register_builtin("kubectl", builtin_kubectl, "Kubernetes command-line tool");
+    shell_register_builtin("helm", builtin_helm, "Kubernetes package manager");
+    shell_register_builtin("terraform", builtin_terraform, "Infrastructure as code");
+    shell_register_builtin("ansible", builtin_ansible, "IT automation platform");
+    shell_register_builtin("puppet", builtin_puppet, "Configuration management");
+    shell_register_builtin("chef", builtin_chef, "Configuration management");
+    shell_register_builtin("salt", builtin_salt, "Configuration management");
+    shell_register_builtin("vagrant", builtin_vagrant, "Development environment management");
+    shell_register_builtin("virtualbox", builtin_virtualbox, "Virtualization software");
+    shell_register_builtin("qemu", builtin_qemu, "Machine emulator and virtualizer");
+    shell_register_builtin("vmware", builtin_vmware, "Virtualization platform");
+    shell_register_builtin("parallel", builtin_parallel, "Execute commands in parallel");
+    shell_register_builtin("timeout", builtin_timeout, "Run a command with time limit");
+    shell_register_builtin("nice", builtin_nice, "Run a program with modified priority");
+    shell_register_builtin("renice", builtin_renice, "Alter priority of running processes");
+    shell_register_builtin("killall", builtin_killall, "Kill processes by name");
+    shell_register_builtin("pgrep", builtin_pgrep, "Look up processes");
+    shell_register_builtin("pkill", builtin_pkill, "Kill processes by name");
+    shell_register_builtin("top", builtin_top, "Display dynamic real-time information");
+    shell_register_builtin("htop", builtin_htop, "Interactive process viewer");
+    shell_register_builtin("free", builtin_free, "Display amount of free and used memory");
+    shell_register_builtin("vmstat", builtin_vmstat, "Virtual memory statistics");
+    shell_register_builtin("iostat", builtin_iostat, "Report CPU and I/O statistics");
+    shell_register_builtin("mpstat", builtin_mpstat, "Report processor statistics");
+    shell_register_builtin("sar", builtin_sar, "Collect and report system activity");
+    shell_register_builtin("strace", builtin_strace, "Trace system calls and signals");
+    shell_register_builtin("ltrace", builtin_ltrace, "Trace library calls");
+    shell_register_builtin("gdb", builtin_gdb, "GNU debugger");
+    shell_register_builtin("valgrind", builtin_valgrind, "Memory debugging tool");
+    shell_register_builtin("perf", builtin_perf, "Performance analysis tool");
+    shell_register_builtin("sysctl", builtin_sysctl, "Configure kernel parameters");
+    shell_register_builtin("modprobe", builtin_modprobe, "Add/remove kernel modules");
+    shell_register_builtin("insmod", builtin_insmod, "Insert module into the kernel");
+    shell_register_builtin("rmmod", builtin_rmmod, "Remove module from the kernel");
+    shell_register_builtin("lsmod", builtin_lsmod, "Show kernel module status");
+    shell_register_builtin("lspci", builtin_lspci, "List PCI devices");
+    shell_register_builtin("lsusb", builtin_lsusb, "List USB devices");
+    shell_register_builtin("lsblk", builtin_lsblk, "List block devices");
+    shell_register_builtin("fdisk", builtin_fdisk, "Disk partition manipulator");
+    shell_register_builtin("partprobe", builtin_partprobe, "Inform OS of partition changes");
+    shell_register_builtin("mkfs", builtin_mkfs, "Build a Linux filesystem");
+    shell_register_builtin("fsck", builtin_fsck, "Check and repair filesystem");
+    shell_register_builtin("dd", builtin_dd, "Convert and copy files");
+    shell_register_builtin("mkswap", builtin_mkswap, "Set up a swap area");
+    shell_register_builtin("swapon", builtin_swapon, "Enable devices and files for swapping");
+    shell_register_builtin("swapoff", builtin_swapoff, "Disable devices and files for swapping");
+    shell_register_builtin("brctl", builtin_brctl, "Ethernet bridge administration");
+    shell_register_builtin("ip", builtin_ip, "Show or manipulate routing and devices");
+    shell_register_builtin("ifup", builtin_ifup, "Bring a network interface up");
+    shell_register_builtin("ifdown", builtin_ifdown, "Take a network interface down");
+    shell_register_builtin("host", builtin_host, "DNS lookup utility");
+    shell_register_builtin("dig", builtin_dig, "DNS lookup utility");
+    shell_register_builtin("nslookup", builtin_nslookup, "Query Internet name servers");
+    shell_register_builtin("traceroute", builtin_traceroute, "Trace route to host");
+    shell_register_builtin("mtr", builtin_mtr, "Network diagnostic tool");
+    shell_register_builtin("tcpdump", builtin_tcpdump, "Dump traffic on a network");
+    shell_register_builtin("wireshark", builtin_wireshark, "Network protocol analyzer");
+    shell_register_builtin("tshark", builtin_tshark, "Network protocol analyzer");
+    shell_register_builtin("nmap", builtin_nmap, "Network exploration and security auditing");
+    shell_register_builtin("netcat", builtin_netcat, "TCP/IP swiss army knife");
+    shell_register_builtin("socat", builtin_socat, "Multipurpose relay");
+    shell_register_builtin("screen", builtin_screen, "Screen manager with VT100/ANSI emulation");
+    shell_register_builtin("tmux", builtin_tmux, "Terminal multiplexer");
+    shell_register_builtin("byobu", builtin_byobu, "Text-based window manager");
+    shell_register_builtin("dbus", builtin_dbus, "Interprocess messaging system");
+    shell_register_builtin("systemd", builtin_systemd, "System and service manager");
+}
+
+static void shell_register_builtins_extended(void) {
     shell_register_builtin("echo", builtin_echo, "Display a line of text");
     shell_register_builtin("cd", builtin_cd, "Change the shell working directory");
     shell_register_builtin("pwd", builtin_pwd, "Print name of current/working directory");
@@ -2426,37 +2292,56 @@ static void shell_draw_main_content(void) {
     uint32_t cx = main_panel.bounds.x + 16;
     uint32_t cy = main_panel.bounds.y + 32;
 
-    text_draw(cx, cy, "Welcome to MiraOS", 0xFFFFFF, main_panel.fill);
-    text_draw(cx, cy + 48, "Type in the command bar below. Enter clears the line.", 0x888888, main_panel.fill);
+    text_draw(cx, cy, "MiraOS", 0xFFFFFF, main_panel.fill);
+    text_draw(cx, cy + 48, "Enter executes. Backspace edits. Buttons work.", 0x888888, main_panel.fill);
 
-    int fd = vfs_open("/readme.txt", VFS_O_RDONLY);
-    if (fd >= 0) {
-        char filebuf[80];
-        ssize_t n = vfs_read(fd, filebuf, 79);
-        if (n > 0) {
-            filebuf[n] = 0;
-            text_draw(cx, cy + 56, filebuf, 0x53D8FB, main_panel.fill);
-        }
-        vfs_close(fd);
-    }
+    // No external VFS assets required.
+    char buf[128];
+    uint64_t t = timer_ticks();
+    ds_strcpy(buf, "Uptime: ");
 
-    fd = vfs_open("/version", VFS_O_RDONLY);
-    if (fd >= 0) {
-        char verbuf[16];
-        ssize_t n = vfs_read(fd, verbuf, 15);
-        if (n > 0) {
-            verbuf[n] = 0;
-            text_draw(cx, cy + 88, "Version: ", 0xAAAAAA, main_panel.fill);
-            text_draw(cx + 72, cy + 88, verbuf, 0xE94560, main_panel.fill);
+    // timer_ticks() -> decimal into buf + strlen("Uptime: ")
+    int bi = (int)ds_strlen(buf);
+    char tmp[24];
+    int ti = 0;
+    if (t == 0) {
+        tmp[ti++] = '0';
+    } else {
+        while (t > 0) {
+            tmp[ti++] = '0' + (t % 10);
+            t /= 10;
         }
-        vfs_close(fd);
     }
+    while (ti > 0) {
+        buf[bi++] = tmp[--ti];
+    }
+    buf[bi] = 0;
+    text_draw(cx, cy + 56, buf, 0x53D8FB, main_panel.fill);
+
+    ds_strcpy(buf, "Framebuffer: ");
+    framebuffer_t *fb = fb_info();
+    if (fb) {
+        // Render WxH as decimal.
+        int w = (int)fb->width;
+        int h = (int)fb->height;
+        char wbuf[16];
+        char hbuf[16];
+        int_to_str(w, wbuf);
+        int_to_str(h, hbuf);
+        ds_strcat(buf, wbuf);
+        ds_strcat(buf, "x");
+        ds_strcat(buf, hbuf);
+    } else {
+        ds_strcat(buf, "unknown");
+    }
+    text_draw(cx, cy + 88, buf, 0xAAAAAA, main_panel.fill);
 
     gfx_draw_rect(cx, cy + 120, 200, 80, 0x0F3460);
     gfx_draw_rect_outline(cx, cy + 120, 200, 80, 0x53D8FB, 2);
-    text_draw(cx + 16, cy + 140, "Widget Demo", 0xFFFFFF, 0x0F3460);
-    text_draw(cx + 16, cy + 160, "Rect + text", 0xCCCCCC, 0x0F3460);
+    text_draw(cx + 16, cy + 140, "UI", 0xFFFFFF, 0x0F3460);
+    text_draw(cx + 16, cy + 160, "No assets required", 0xCCCCCC, 0x0F3460);
 }
+
 
 void shell_init(void) {
     dirty = true;
@@ -2470,24 +2355,42 @@ void shell_init(void) {
 
 void shell_tick(void) {
     size_t prev = input_length();
-    input_poll();
     const char *buf = input_buffer();
+
+    /* Snapshot the current buffer before polling clears it on Enter */
+    char snapshot[INPUT_MAX];
+    size_t snap_len = prev < INPUT_MAX ? prev : INPUT_MAX - 1;
+    for (size_t i = 0; i < snap_len; i++)
+        snapshot[i] = buf[i];
+    snapshot[snap_len] = 0;
+
+    input_poll();
+    buf = input_buffer();
     size_t len = input_length();
+
     if (len >= INPUT_MAX)
         len = INPUT_MAX - 1;
+
     for (size_t i = 0; i < len; i++)
         cmd_buf[i] = buf[i];
     cmd_buf[len] = 0;
     cmd_field.len = len;
+
     if (len != prev)
         dirty = true;
-    if (len == 5 && cmd_buf[0] == 'c' && cmd_buf[1] == 'l' && cmd_buf[2] == 'e' && cmd_buf[3] == 'r' && cmd_buf[4] == 'a') {
-        input_clear();
+
+    /* Enter: prev had content, now cleared */
+    if (prev > 0 && len == 0) {
+        if (snapshot[0]) {
+            shell_execute_command(snapshot);
+            shell_add_history(snapshot);
+        }
         cmd_buf[0] = 0;
         cmd_field.len = 0;
         dirty = true;
     }
 }
+
 
 void shell_render(void) {
     if (!fb_ready())

@@ -20,6 +20,10 @@ void drivers_pic_send_eoi(uint8_t irq) {
     outb(PIC1_CMD, PIC_EOI);
 }
 
+void pic_send_eoi(uint8_t irq) {
+    drivers_pic_send_eoi(irq);
+}
+
 void pic_mask_irq(uint8_t irq) {
     uint16_t port;
     uint8_t value;

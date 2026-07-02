@@ -13,7 +13,12 @@ static int timer_driver_init(void) {
 static void timer_driver_irq(uint8_t irq) {
     (void)irq;
     timer_on_irq();
+    
+    /* Drive process scheduling */
+    extern void scheduler_tick(void);
+    scheduler_tick();
 }
+
 
 static driver_t timer_driver = {
     .name = "pit",

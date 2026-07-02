@@ -1,114 +1,102 @@
 # MiraOS
 
-MiraOS is a modern operating system built from scratch for x86_64. It has a complete kernel with process management, a filesystem, a networking stack, and a graphical interface with a full shell.
+MiraOS is a hands-on, from-scratch operating system project for x86_64 that aims to be understandable, extensible, and genuinely fun to build. Rather than relying on a heavy desktop environment or a large framework, it focuses on the core pieces that make an OS feel alive: bootstrapping, memory management, scheduling, drivers, filesystems, networking, and a simple user interface.
 
-## Features
+## What MiraOS includes
 
-**Kernel**
+- a custom boot path with a small boot sector instead of GRUB
+- a kernel that initializes the GDT, IDT, interrupts, paging, and a basic heap
+- a simple process model and scheduler
+- a virtual filesystem layer backed by a RAM filesystem
+- basic graphics and input support for a lightweight UI shell
+- a small set of kernel and user-facing primitives for experimentation
 
-The kernel supports the x86_64 architecture with GDT, IDT, and ISR handling. It manages physical memory with a bitmap allocator and handles virtual memory through 4 level paging. There's a heap allocator with a slab allocator for small objects, a syscall interface, and a process manager that uses round robin scheduling. It can load ELF binaries, talks to storage through an ATA/IDE driver, supports PS/2 keyboard and mouse input, and renders graphics through a double buffered framebuffer driver.
+## Getting started
 
-**Filesystem**
+You will need:
 
-A virtual filesystem layer sits on top of a RAM filesystem (ramfs) used for persistent storage.
+- Zig
+- NASM
+- xorriso
+- QEMU
 
-**Networking**
-
-There's a basic networking stack that handles Ethernet frames and MAC addresses.
-
-**User Interface**
-
-The UI looks and feels like a modern desktop, with panels and widgets. The graphical shell (msh.mex) comes with over 100 built in commands, supports text rendering, and handles both mouse and keyboard input through double buffered rendering.
-
-**Shell Commands**
-
-The shell covers the basics you'd expect. File operations like ls, cat, mkdir, touch, cp, mv, rm, and rmdir. System info commands like uname, hostname, whoami, id, uptime, and date. Process management with ps, kill, jobs, fg, bg, and wait. Text processing tools like echo, grep, sed, awk, head, tail, wc, sort, and cut. Network tools including ping, ifconfig, ssh, scp, wget, and curl (currently stubbed). Plus plenty more.
-
-## Building
-
-You'll need the Zig compiler (used for C compilation), NASM, xorriso for building the ISO, and QEMU for testing.
+On Windows, the included build script is the easiest entry point. On Linux or WSL, the Makefile should work as-is once the tools are installed.
 
 ```bash
-# Build the ISO
-make
+# Build the image
+make iso
 
-# Build and run in QEMU
+# Build and launch in QEMU
 make run
 
-# Clean build artifacts
+# Remove generated artifacts
 make clean
 ```
 
-On Windows, use the included `build-iso.bat` script.
+## Project layout
 
-## Architecture
-
-```
+```text
 boot/
-  boot.asm        Second stage bootloader
-  stage1.asm      First stage bootloader (GRUB compatible)
+  boot.asm        early boot entry used by the kernel image
+  stage1.asm      custom BIOS boot sector
 
 arch/x86_64/
-  cpu.h/c         Low level CPU I/O and control
-  gdt.h/c         Global Descriptor Table
-  idt.h/c         Interrupt Descriptor Table
-  isr.h/c/asm     Interrupt Service Routines
-  paging.h/c      Virtual memory management
-  syscall_entry.asm  System call entry point
+  cpu.h/c         low-level CPU helpers
+  gdt.h/c         Global Descriptor Table setup
+  idt.h/c         Interrupt Descriptor Table setup
+  isr.h/c/asm     interrupt handling
+  paging.h/c      paging support
+  syscall_entry.asm  syscall entry
 
 kernel/
-  main.c          Kernel entry point
-  mem.h/c         Physical memory manager
-  heap.h/c        Kernel heap allocator
-  syscall.h/c     System call dispatcher
-  process.h/c     Process management and scheduler
-  elf.h/c         ELF binary loader
-  panic.h/c       Kernel panic handler
+  main.c          kernel entry point
+  mem.h/c         physical memory manager
+  heap.h/c        kernel heap allocator
+  syscall.h/c     syscall dispatcher
+  process.h/c     process and scheduler primitives
+  elf.h/c         ELF loader
+  panic.h/c       panic and diagnostic output
 
 drivers/
-  driver.h/c      Driver subsystem framework
-  framebuffer.h/c Graphics framebuffer
-  keyboard.h/c    PS/2 keyboard
-  mouse.h/c       PS/2 mouse
-  timer.h/c       PIT timer
-  pic.h/c         PIC interrupt controller
-  ata.h/c         ATA/IDE disk driver
+  driver.h/c      driver subsystem
+  framebuffer.h/c graphics framebuffer
+  keyboard.h/c    keyboard input
+  mouse.h/c       mouse input
+  timer.h/c       timer support
+  pic.h/c         interrupt controller setup
+  ata.h/c         ATA storage driver
 
 fs/
-  vfs.h/c         Virtual filesystem layer
-  ramfs.h/c       RAM filesystem implementation
+  vfs.h/c         virtual filesystem layer
+  ramfs.h/c       RAM-backed filesystem
 
 net/
-  net.h/c         Network stack core
+  net.h/c         network stack core
 
 ui/
   ui.h/c          UI framework and widget system
-  shell.h/c       Full featured shell (msh.mex)
-  widget.h/c      UI widgets (panels, buttons, textfields)
-  gfx.h/c         Graphics primitives
-  text.h/c        Text rendering
-  input.h/c       Input handling
+  shell.h/c       shell experience
+  widget.h/c      widgets and panels
+  gfx.h/c         graphics primitives
+  text.h/c        text rendering
+  input.h/c       input handling
 
 lib/
-  ds.h/c          Data structures library
-  cxxrt.h/c       C++ runtime support
+  ds.h/c          data structure helpers
+  cxxrt.h/c       runtime support
 ```
 
-## Boot Process
+## Boot flow
 
-GRUB loads stage1.bin and kernel.elf. Stage1 sets up basic CPU state and jumps into the kernel. From there the kernel initializes the GDT, physical memory manager, paging, heap allocator, IDT, ISR, syscalls, drivers (framebuffer, keyboard, mouse, timer, ATA), the ramfs filesystem, the network stack, and finally the UI and shell. Once everything's up, the kernel enters its idle loop, handling input and rendering the UI.
+The system now uses a lightweight custom boot path. The BIOS boot sector in the boot sector image prints a short message and then waits, while the kernel image is loaded directly by the emulator or boot medium. The kernel then initializes the core subsystems and enters its main loop.
 
-## Memory Layout
+## Development status
 
-The kernel loads at 1MB physical. The heap starts at virtual address 0x40000000. The stack grows downward from high memory, and each process gets a 1MB stack of its own.
+MiraOS is still a work in progress, but it already has a solid foundation for experimentation: memory management, interrupt handling, a basic scheduler, storage support, networking hooks, graphics, and a shell experience that can be extended over time.
 
-## System Calls
+## Contributing
 
-The kernel exposes exit, read, write, open, close, draw_rect, draw_text, and get_ticks.
-
-## Development Status
-
-MiraOS is actively developed and already has preemptive multitasking, virtual memory, ELF loading, a storage driver, a basic network framework, a modern UI with a working shell, and over 100 shell commands.
+Contributions are welcome. If you would like to help, please open an issue or a pull request, and take a moment to read the code of conduct before getting started.
 
 ## License
 

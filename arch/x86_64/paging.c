@@ -10,16 +10,19 @@
 
 #define HEAP_VIRT_BASE 0x40000000ULL
 
-static uint64_t *pml4_root;
-static uint64_t boot_pt[512] __attribute__((aligned(PAGE_SIZE)));
-static uint64_t boot_pd[512] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t boot_pml4[512] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t boot_pt[512]   __attribute__((aligned(PAGE_SIZE)));
+static uint64_t boot_pd[512]   __attribute__((aligned(PAGE_SIZE)));
 static uint64_t boot_pdpt[512] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t *pml4_root;
 
 static uint64_t *table_alloc(void) {
-    void *page = pmm_alloc_page();
-    if (!page)
+    void *phys = pmm_alloc_page();
+    if (!phys)
         panic("paging oom");
-    uint64_t *t = (uint64_t *)page;
+    /* Identity-map the new page so we can zero it safely. */
+    paging_map_page((uint64_t)phys, (uint64_t)phys, 0);
+    uint64_t *t = (uint64_t *)phys;
     for (int i = 0; i < 512; i++)
         t[i] = 0;
     return t;
@@ -61,13 +64,17 @@ static uint64_t *walk(uint64_t virt, int create) {
 }
 
 void paging_init(void) {
-    pml4_root = table_alloc();
+    /* Use static boot_pml4 — no PMM allocation needed before the map is live. */
+    for (int i = 0; i < 512; i++)
+        boot_pml4[i] = 0;
+    pml4_root = boot_pml4;
 
+    /* Identity-map first 2 MB via static tables. */
     for (int i = 0; i < 512; i++)
         boot_pt[i] = (uint64_t)(i * PAGE_SIZE) | PAGE_PRESENT | PAGE_WRITE;
 
-    boot_pd[0] = (uint64_t)&boot_pt | PAGE_PRESENT | PAGE_WRITE;
-    boot_pdpt[0] = (uint64_t)&boot_pd | PAGE_PRESENT | PAGE_WRITE;
+    boot_pd[0]   = (uint64_t)&boot_pt   | PAGE_PRESENT | PAGE_WRITE;
+    boot_pdpt[0] = (uint64_t)&boot_pd   | PAGE_PRESENT | PAGE_WRITE;
     pml4_root[0] = (uint64_t)&boot_pdpt | PAGE_PRESENT | PAGE_WRITE;
 
     write_cr3((uint64_t)pml4_root);

@@ -1,23 +1,16 @@
+bits 64
+
 section .multiboot
 align 8
 header_start:
-    dd 0xe85250d6
-    dd 0
-    dd header_end - header_start
-    dd -(0xe85250d6 + 0 + (header_end - header_start))
+    dd 0x36d76289      ; multiboot2 magic
+    dd 0               ; architecture (0 = i386)
+    dd 24              ; total header length in bytes
+    dd -(0x36d76289 + 0 + 24) ; checksum
 
     align 8
-    dw 0
-    dw 0
-    dd 8
-
-    align 8
-    dw 5
-    dw 0
-    dd 12
-    dd 1024
-    dd 768
-    dd 32
+    dd 0               ; end tag type
+    dd 8               ; end tag size
 
 header_end:
 

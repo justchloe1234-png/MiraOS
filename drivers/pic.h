@@ -14,6 +14,7 @@
 
 void pic_init(void);
 void drivers_pic_send_eoi(uint8_t irq);
+void pic_send_eoi(uint8_t irq);
 void pic_mask_irq(uint8_t irq);
 void pic_unmask_irq(uint8_t irq);
 uint8_t pic_read_irq(void);

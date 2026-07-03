@@ -82,15 +82,20 @@ static void shell_set_variable_int(const char *name, int value) {
 }
 
 static void shell_layout(void);
+static void shell_draw_fluid_background(void);
 static void shell_draw_string(const char *str, uint32_t fg, uint32_t bg);
 
 
-#define SHELL_SIDEBAR_W 180
+#define SHELL_SIDEBAR_W 212
+#define SHELL_DOCK_H 58
+#define SHELL_TOP_H 46
 
 static ui_panel_t main_panel;
 static ui_panel_t sidebar_panel;
 static ui_button_t btn_clear;
 static ui_button_t btn_about;
+static ui_button_t btn_files;
+static ui_button_t btn_style;
 static ui_textfield_t cmd_field;
 static char cmd_buf[INPUT_MAX];
 static bool dirty;
@@ -840,7 +845,7 @@ static int builtin_clear(shell_ctx_t *ctx, ast_node_t *node) {
     (void)ctx; (void)node;
     framebuffer_t *fb = fb_info();
     if (fb) {
-        gfx_draw_rect(0, 0, fb->width, fb->height, 0x0A0A14);
+        shell_draw_fluid_background();
         shell_layout();
     }
     return 0;
@@ -2209,54 +2214,74 @@ static void shell_layout(void) {
 
     uint32_t sw = fb->width;
     uint32_t sh = fb->height;
-    uint32_t top = 40;
-    uint32_t bottom = 48;
+    uint32_t top = SHELL_TOP_H;
+    uint32_t bottom = SHELL_DOCK_H;
 
     sidebar_panel.bounds.x = 0;
     sidebar_panel.bounds.y = top;
     sidebar_panel.bounds.w = SHELL_SIDEBAR_W;
     sidebar_panel.bounds.h = sh - top - bottom;
-    sidebar_panel.fill = 0x1A1A2E;
-    sidebar_panel.border = 0x533483;
-    sidebar_panel.title_bg = 0x16213E;
-    sidebar_panel.title = "Apps";
+    sidebar_panel.fill = 0xFFD1EA;
+    sidebar_panel.border = 0xFF5DB8;
+    sidebar_panel.title_bg = 0xFF8AD8;
+    sidebar_panel.title = "Sweet Apps";
 
     main_panel.bounds.x = SHELL_SIDEBAR_W + 12;
     main_panel.bounds.y = top + 12;
     main_panel.bounds.w = sw - SHELL_SIDEBAR_W - 24;
     main_panel.bounds.h = sh - top - bottom - 24;
-    main_panel.fill = 0x16213E;
-    main_panel.border = 0xE94560;
-    main_panel.title_bg = 0x0F3460;
-    main_panel.title = "Desktop";
+    main_panel.fill = 0xFFE3F2;
+    main_panel.border = 0xFF4FB3;
+    main_panel.title_bg = 0xFF9EDD;
+    main_panel.title = "Dream Desktop";
 
     btn_clear.bounds.x = 16;
     btn_clear.bounds.y = top + 40;
     btn_clear.bounds.w = SHELL_SIDEBAR_W - 32;
     btn_clear.bounds.h = 32;
-    btn_clear.fill = 0x0F3460;
-    btn_clear.border = 0x53D8FB;
+    btn_clear.fill = 0xFF75C8;
+    btn_clear.border = 0xFFFFFF;
     btn_clear.text_color = 0xFFFFFF;
-    btn_clear.label = "Clear";
+    btn_clear.label = "Clean";
     btn_clear.pressed = false;
 
     btn_about.bounds.x = 16;
     btn_about.bounds.y = top + 80;
     btn_about.bounds.w = SHELL_SIDEBAR_W - 32;
     btn_about.bounds.h = 32;
-    btn_about.fill = 0x0F3460;
-    btn_about.border = 0x53D8FB;
+    btn_about.fill = 0xFF75C8;
+    btn_about.border = 0xFFFFFF;
     btn_about.text_color = 0xFFFFFF;
     btn_about.label = "About";
     btn_about.pressed = false;
+
+    btn_files.bounds.x = 16;
+    btn_files.bounds.y = top + 120;
+    btn_files.bounds.w = SHELL_SIDEBAR_W - 32;
+    btn_files.bounds.h = 32;
+    btn_files.fill = 0xFF75C8;
+    btn_files.border = 0xFFFFFF;
+    btn_files.text_color = 0xFFFFFF;
+    btn_files.label = "Files";
+    btn_files.pressed = false;
+
+    btn_style.bounds.x = 16;
+    btn_style.bounds.y = top + 160;
+    btn_style.bounds.w = SHELL_SIDEBAR_W - 32;
+    btn_style.bounds.h = 32;
+    btn_style.fill = 0xFF75C8;
+    btn_style.border = 0xFFFFFF;
+    btn_style.text_color = 0xFFFFFF;
+    btn_style.label = "Style";
+    btn_style.pressed = false;
 
     cmd_field.bounds.x = 16;
     cmd_field.bounds.y = sh - bottom + 8;
     cmd_field.bounds.w = sw - 32;
     cmd_field.bounds.h = 32;
-    cmd_field.fill = 0x1E1E2E;
-    cmd_field.border = 0x5C5C7A;
-    cmd_field.text_color = 0xFFFFFF;
+    cmd_field.fill = 0xFFF5FB;
+    cmd_field.border = 0xFF75C8;
+    cmd_field.text_color = 0x9B005D;
     cmd_field.buffer = cmd_buf;
     cmd_field.buflen = INPUT_MAX;
     cmd_field.focused = true;
@@ -2264,8 +2289,9 @@ static void shell_layout(void) {
 
 static void shell_draw_statusbar(void) {
     framebuffer_t *fb = fb_info();
-    gfx_draw_rect(0, 0, fb->width, 40, 0x0F3460);
-    text_draw(16, 12, "MiraOS", 0xFFFFFF, 0x0F3460);
+    gfx_draw_rect(0, 0, fb->width, SHELL_TOP_H, 0xFF6FBC);
+    gfx_draw_rect(0, SHELL_TOP_H - 6, fb->width, 6, 0xFFC3E6);
+    text_draw(16, 14, "MiraOS  *  Rose Shell", 0xFFFFFF, 0xFF6FBC);
 
     char tickbuf[24];
     uint64_t t = timer_ticks();
@@ -2285,15 +2311,40 @@ static void shell_draw_statusbar(void) {
             tickbuf[pos++] = tmp[--ti];
     }
     tickbuf[pos] = 0;
-    text_draw(fb->width - 100, 12, tickbuf, 0xA0A0A0, 0x0F3460);
+    text_draw(fb->width - 116, 14, tickbuf, 0xFFFFFF, 0xFF6FBC);
+}
+
+static void shell_draw_fluid_background(void) {
+    framebuffer_t *fb = fb_info();
+    uint64_t t = timer_ticks();
+    for (uint32_t y = 0; y < fb->height; y++) {
+        uint32_t band = (y + (uint32_t)(t & 63)) & 127;
+        uint32_t color = band < 42 ? 0xFFEAF6 : (band < 84 ? 0xFFD4EC : 0xFFF8FC);
+        gfx_draw_rect(0, y, fb->width, 1, color);
+    }
+    uint32_t w = fb->width ? fb->width : 1;
+    uint32_t h = fb->height ? fb->height : 1;
+    uint32_t a = (uint32_t)(t % w);
+    uint32_t b = (uint32_t)((t * 2 + 120) % w);
+    gfx_draw_circle(a, 120 + (uint32_t)(t % (h / 3 + 1)), 96, 0xFFC1E1, true);
+    gfx_draw_circle(b, h > 160 ? h - 130 : h / 2, 124, 0xFF9EDD, true);
+    gfx_draw_circle((a + b) / 2, h / 2, 72, 0xFFF7B8, true);
+}
+
+static void shell_draw_sparkle(uint32_t x, uint32_t y, uint32_t color) {
+    gfx_draw_line(x, y - 6, x, y + 6, color);
+    gfx_draw_line(x - 6, y, x + 6, y, color);
+    gfx_draw_line(x - 4, y - 4, x + 4, y + 4, color);
+    gfx_draw_line(x - 4, y + 4, x + 4, y - 4, color);
 }
 
 static void shell_draw_main_content(void) {
     uint32_t cx = main_panel.bounds.x + 16;
     uint32_t cy = main_panel.bounds.y + 32;
 
-    text_draw(cx, cy, "MiraOS", 0xFFFFFF, main_panel.fill);
-    text_draw(cx, cy + 48, "Enter executes. Backspace edits. Buttons work.", 0x888888, main_panel.fill);
+    text_draw(cx, cy, "MiraOS Pink Edition", 0x9B005D, main_panel.fill);
+    text_draw(cx, cy + 24, "A soft desktop shell with fluid motion, dock, apps and sparkle UI.", 0xB8006E, main_panel.fill);
+    shell_draw_sparkle(main_panel.bounds.x + main_panel.bounds.w - 38, cy + 12, 0xFF4FB3);
 
     // No external VFS assets required.
     char buf[128];
@@ -2316,7 +2367,7 @@ static void shell_draw_main_content(void) {
         buf[bi++] = tmp[--ti];
     }
     buf[bi] = 0;
-    text_draw(cx, cy + 56, buf, 0x53D8FB, main_panel.fill);
+    text_draw(cx, cy + 56, buf, 0xE40087, main_panel.fill);
 
     ds_strcpy(buf, "Framebuffer: ");
     framebuffer_t *fb = fb_info();
@@ -2334,12 +2385,18 @@ static void shell_draw_main_content(void) {
     } else {
         ds_strcat(buf, "unknown");
     }
-    text_draw(cx, cy + 88, buf, 0xAAAAAA, main_panel.fill);
+    text_draw(cx, cy + 88, buf, 0x9B005D, main_panel.fill);
 
-    gfx_draw_rect(cx, cy + 120, 200, 80, 0x0F3460);
-    gfx_draw_rect_outline(cx, cy + 120, 200, 80, 0x53D8FB, 2);
-    text_draw(cx + 16, cy + 140, "UI", 0xFFFFFF, 0x0F3460);
-    text_draw(cx + 16, cy + 160, "No assets required", 0xCCCCCC, 0x0F3460);
+    const char *cards[3] = { "Notes", "Photos", "Terminal" };
+    for (uint32_t i = 0; i < 3; i++) {
+        uint32_t x = cx + i * 154;
+        uint32_t y = cy + 124;
+        gfx_draw_rect(x + 4, y + 6, 136, 88, 0xECA7CF);
+        gfx_draw_rect(x, y, 136, 88, i == 1 ? 0xFFF7B8 : 0xFFF5FB);
+        gfx_draw_rect_outline(x, y, 136, 88, 0xFF75C8, 2);
+        gfx_draw_circle(x + 28, y + 30, 14, 0xFF75C8, true);
+        text_draw(x + 18, y + 58, cards[i], 0x9B005D, i == 1 ? 0xFFF7B8 : 0xFFF5FB);
+    }
 }
 
 
@@ -2354,6 +2411,7 @@ void shell_init(void) {
 }
 
 void shell_tick(void) {
+    dirty = true;
     size_t prev = input_length();
     const char *buf = input_buffer();
 
@@ -2398,18 +2456,21 @@ void shell_render(void) {
 
     shell_layout();
     framebuffer_t *fb = fb_info();
-    gfx_draw_rect(0, 0, fb->width, fb->height, 0x0A0A14);
+    shell_draw_fluid_background();
 
     shell_draw_statusbar();
     ui_panel_draw(&sidebar_panel);
     ui_panel_draw(&main_panel);
     ui_button_draw(&btn_clear);
     ui_button_draw(&btn_about);
+    ui_button_draw(&btn_files);
+    ui_button_draw(&btn_style);
     shell_draw_main_content();
     ui_textfield_draw(&cmd_field);
 
-    gfx_draw_rect(0, fb->height - 40, fb->width, 40, 0x0F3460);
-    text_draw(16, fb->height - 28, "Enter: clear line | Backspace: edit", 0x888888, 0x0F3460);
+    gfx_draw_rect(0, fb->height - SHELL_DOCK_H, fb->width, SHELL_DOCK_H, 0xFFB6DE);
+    gfx_draw_rect(0, fb->height - SHELL_DOCK_H, fb->width, 4, 0xFFFFFF);
+    text_draw(16, fb->height - 42, "Type a command, press Enter.  Backspace edits.  Pink dock is always alive.", 0x9B005D, 0xFFB6DE);
 
     dirty = false;
 }
